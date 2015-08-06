@@ -1,0 +1,372 @@
+<h2 align="center"> <em> Book Identification from Bookshelf Images </em> </h2>
+
+<h4 align="center"> Final project by </h4>
+
+<h3 align="center"> <em> Pavel Rubinson </em> </h3>
+<h4 align="center"> <a href="mailto:pavelr@gmail.com" class="course"> pavelr@gmail.com  </a> </h4>
+
+<h3> 1. Introduction </h3>
+<p align=justify>
+While many websites provide review-based book rankings, brick and mortar stores do not provide easy access to such data. In this project, we develop a system for identifying books from a photo of a bookshelf. This information can then be used to extract any required book-related data from the internet, thus providing the clients of brick-and-mortar bookstores with the same kind of information as is available online. Our system extracts book spines from the photo, segments the text from the background, and groups individual characters into words. An implementation is also provided for training a classifier for character recognition. For segmentation, we propose and implement a simple method suitable for most book spines. For the grouping of characters into words, we develop a new algorithm, suitable for text with a variety of orientations and sizes. Our system achieves successful spine separation in around 94% of cases, successful segmentation of text in 77% of the spines, and correct word grouping for 74% percent of successfully segmented words. 
+</p>
+
+<figure align="middle">
+  <img src="images/bookshelf.jpg" style="width: 450px; margin: 10px;" alt="Example bookshelf photo">
+  <figcaption>Fig1. - A photo of a bookshelf.</figcaption>
+</figure>
+
+
+<h3> 2. Methods </h3>
+<p align=justify> Recognition of book spines presents several challenges. Book spines are often characterized by multiple colors, varying typefaces and font sizes, non-text graphics, more than one text orientations, and varying locations of text. Those properties mainly effect the difficulty of text segmentation and layout analysis. Following is a brief description of out system components and out methodology for dealing with those, and other, challenges. </p>
+
+<p align=justify> The process of book recognition is separated into four major parts, listed in their order of application: </p>
+
+
+<ol>
+
+<li> Book spine separation.</li>
+<li> Text segmentation (separation of text from background)</li>
+<li> Layout analysis (grouping of characters into words)</li>
+<li> Character recognition. </li>
+</ol>
+
+
+<h4> 2.1. Spine Separation </h4>
+<p align=justify>
+Given a photo of a bookshelf with vertically oriented books, our first step is to identify the borders of each individual spine, and separate them in preparation for further processing of each spine. We implement this step by converting the image into grayscale, applying Canny edge detection , then applying the Hough line transform on the edge image. The lines extracted from the parameter space are only those with -20<=theta<=20, that is - approximately vertical lines. Nearby lines are merged together to avoid redundant spine edges. The border of each spine is the assumed to be defined by two consecutive lines (with respect to the x axis). Each spine is cropped according to this border, and then wrapped into a rectangular image to compensate for distortions due to perspective. 
+</p>
+<figure align="middle">
+  <img src="images/extracted_spines.jpg" style="width: 450px; margin: 10px;" alt="Spine separation">
+  <figcaption>Fig2. - Extracted spines.</figcaption>
+</figure>
+
+<h4> 2.2. Text Segmentation </h4>
+<p align=justify> Successful text segmentation of book spines required dealing with several challenges. Book spines are often characterized by non-uniform background and non-uniform text properties, such as size and color, as well as non textual graphics. This non-uniformity is apparent when comparing different spines, but is also often present within individual spines: A single spine can have multiple background colors, as well as different text colors and font sizes.  
+</p>
+
+<p align=justify>
+Our approach to dealing with text segmentation under those conditions is first to observe that while this non-uniformity is indeed present along the y dimension of each spine (we are assuming that the spine is oriented vertically), the situation is often much simpler when considering only the x dimension for a fixed y. For example: many book spines often consist of two background colors, but they are arranged as one below the other, as opposed to being adjacent along vertical lines. For a fixed y=y0, pixels along this line either take at most 2 values (text and background), or at the very least this line has a uniform “background”. This characterizes the vast majority of book spines, though not all of them. This too can be seen in the spines present in
+</p>
+
+<p align=justify>
+We therefore propose a simple segmentation method that exploits the above observation: we pass a narrow window along the spine, and for each new location we threshold the window using Otsu's method. Otsu's method calculates a threshold value which is “optimal” in the sense that it minimizes the intra-class variance of pixel values, or equivalently maximized the variance between classes. Therefore if each window is characterized by a uniform background which is of sufficiently different value from the value of text pixels, we expect Otsu's method to result in a successful text-background segmentation, as is indeed the case. It should be noted that for windows without text, no segmentation is needed at all, and in fact Otsu's method will only make things worse by forcing a segmentation which doesn't represent neither text nor background. We therefore check, prior to segmentation, the difference between the minimum and maximum pixel values within the window. If the difference is low - we assume the window contains no text, set the window pixels to black, and skip the segmentation altogether. 
+</p>
+
+<figure align="middle">
+  <img src="images/segmentation windows.jpg" style="width: 350px; margin: 10px;" alt="Segmentation windows">
+  <figcaption>Fig3. - Segmentation of windows.</figcaption>
+</figure>
+
+<p align=justify>
+While the segmentation result for each window is approximately correct in the sense that it successfully separates text and background, we still need make sure that the same single class is reserved for text across the entire spine. i.e., in practical terms, we want all text pixels to be white and all background pixels to be black, across all segmentation windows. This requires checking, for each window that was segmented, which class is text and which is background, and flipping them if necessary. We expect text to be surrounded by background. That is, if both background and text are present - we expect the x coordinate of the leftmost (rightmost) background pixels will be greater (lower) than the x coordinate of the leftmost (rightmost) text pixels. We check this, and flip the classes if necessary. </p>
+
+<p align=justify>
+We now wish to remove white blobs which aren't text. Those can be graphics which are present on the spine, image noise, and background elements which weren't successfully labeled as background. We first find the connected components in the binary image resulting from the segmentation. At this point each connected component is either a character or a wrongly labeled component, which we would want to remove. We remove components with at least one of the following properties: 
+</p>
+
+<ul>
+<li> Height greater than 0.9 of the spine width </li>
+<li> Width greater than 0.7 of the spine width and aspect ratio greater than 5</li>
+<li> Fewer pixels than (spine width/30)^2 </li>
+<li> Aspect ratio between 0.5 and 1.7, and solidity greater than 0.9 </li>
+</ul>
+
+<p align=justify> 
+The above geometric constraints were chosen after a lengthy experimentation process. We have encountered some difficulties in achieving a good balance between removing as many noisy connected components as possible on one hand, and making sure valid characters aren't accidentally removed on the other. The result, while manages to remove some noise, fails in several cases, and many book spines still have some amount of non-text CCs remaining at the end of the process.
+</p>
+
+<figure align="middle">
+  <img src="images/segmented spines.jpg" style="width: 450px; margin: 10px;" alt="Segmented spines">
+  <figcaption>Fig4. - Segmentated spines.</figcaption>
+</figure>
+
+<h4> 2.3. Layout Analysis </h4>
+<p align=justify>
+The main goal of the layout analysis stage is to group individual CCs (connected components) into words. We do not attempt to further group individual words into lines, etc, as the words by themselves, even out of order, are sufficient to successfully search for the book in a database. Here again the main challenge is the lack of any uniform text structure in book spines: one cannot infer global letter and word spacing distances, because no such global value exists -- different words have different sizes, different typefaces, different orientations (horizontal and vertical) and also different spacing properties. 
+</p>
+
+<p align=justify>
+Our approach is to consider only properties that can be inferred locally for each CC, or for a small group of CCs. First, starting from an arbitrary symbol, we create a path P consisting of all the individual symbols, by going at each step to the nearest unvisited neighbor. We then split this path at edges which are suspected as word end points, i.e. for a subpath (a,b,c) of P, we split at (a,b) if it is significantly longer than (b,c), and we split at (b,c) if it is significantly longer than (a,b). The distance between two characters is taken as the distance between the two nearest pixels of those two characters. This splitting process results in a list of word candidates, where each candidate is a subpath of P.
+</p>
+
+<figure align="middle">
+  <img src="images/words.jpg" style="width: 450px; margin: 10px;" alt="Segmented spine">
+  <img src="images/words0.jpg" style="width: 450px; margin: 10px;" alt="Segmened spine with path">
+  <img src="images/words1.jpg" style="width: 450px; margin: 10px;" alt="Path with edges for deletion">
+  <img src="images/words2.jpg" style="width: 450px; margin: 10px;" alt="Results after splitting">
+  <figcaption>Fig5. - Creating a path through the characters, and deleting edges (makred with red dots) to create word candidates.</figcaption>
+</figure>
+
+<p align=justify>
+Since the resulting word candidates are mostly oversegmented actual words, we next wish to merge word candidates that belong to the same word. However now we have additional information to work with: spacing and angle statistics for each candidate. We check if two segments can be merged using the following procedure.
+</p>
+
+<p align=justify>
+For each segment, we calculate the following values: 
+
+<ul>
+<li> Mean distance between adjacent characters </li>
+<li>Standard deviation of the distances between adjacent characters </li>
+<li>Mean angle between adjacent characters, given in the range of 0 to pi/2 </li>
+</ul>
+
+Additionaly, we calculate:
+<ul>
+<li> The distance between the two segments, defined as the distance between the two nearest end-point characters of the segments </li>
+<li> The angle between the two segments, defined as the angle between the two nearest end-point characters of the segments </li>
+</ul>
+
+We then check for the following two conditions:
+<ol>
+<li> The distance between the segments is within reasonable limits from the inner distances of at least one of the segments. Where “reasonable” is define as within 1.5 standard deviations from the mean distance. </li>
+<li> The angle between the segments is within reasonable limits from the inner angles of at least one of the segments. Where “reasonable” is defined as within distance 15 degrees from the mean angle. </li>
+</ol>
+
+Iff both of the conditions are met - we merge the words. 
+</p>
+
+<p align=justify>
+Special care should be taken when considering words of length 2, since the standard deviation in this case is always zero. Therefore in those cases we substitute the standard deviation value by some predefined fraction of the mean. In our implementation this value is set to 0.5.
+</p>
+
+<p align=justify>
+The actual merging procedure is done recursively: at each iteration we look for two segments that can be merged, merge them, then return the result of the procedure on the updated word list. This implementation has the advantage that new information created by each merge (i.e. distance and angle values for the new merged word) can be used immediately for any following merge. 
+</p>
+
+<figure align="middle">
+  <img src="images/words3.jpg" style="width: 450px; margin: 10px;" alt="Merged words">
+  <figcaption>Fig6. - Result after merging.</figcaption>
+</figure>
+
+<h4> 2.4. Character Recognition </h4>
+<p align=justify>
+Prior to the actual character recognition, we calculate, for each word found in the previous step, its orientation. Under our problem domain assumptions, text appearing on book spines can be in either a vertical or a horizontal orientation. We infer the orientation by calculating the centroids of the first and last characters in each word, then checking if the difference between their x coordinates is greater than the distance between their y coordinates. Assuming the spine is vertical, the former would mean that the word is oriented horizontally, and the latter means it is oriented vertically. Before attempting to recognize each character, we flip it according to its orientation. 
+</p>
+
+<p align=justify>
+Since our system must be able to recognize characters of different typefaces, simple template matching techniques (see [11] for a survey of those methods) aren't likely to work. Our intention was to use a more robust classifier by training a multi-class SVM on Microsoft's Chars74k dataset [6], with HOG descriptors as feature vectors. In practice we were unable to train this classifier on our system, mainly because training the multi-class SVM required training over 1,800 binary classifiers, while in a single night we have managed to train less than 200. As an alternative we have also tried training a K-Nearest Neighbors classifier, however this too failed to work due to running out of memory. Attempting to train the classifiers on university computers didn't work either because the code requires Matlab 2014b or higher. To provide some sort of a working alternative we have included in our application the ability to recognize the extracted words using Matlab's built-in OCR functionality, however unfortunately its performance seems to be very poor even on relatively simple cases, and it rarely manages to recognize anything. Still, since the project includes functioning code for training the above-mentioned classifiers on the Chars74k dataset (based on [7]) , we will briefly describe the components of this system. Additionally, brief instructions on how to train the classifiers are provided at the end of this report.
+</p> 
+
+<h5> 2.4.1. Chars74k Dataset </h5>
+<p align=justify> 
+The Chars74k dataset [6] was originally used to create a system for character recognition in natural images, using an SVM [11]. The dataset contains training images for 62 classes: letters, capital letters, and digits. Each class has image samples from 256 fonts, with 4 variations for each font (italic, bold and normal). The total number of images is 62,992, or 1016 per class. 
+</p>
+
+<h5> 2.4.2. HOG Feature Descriptors </h5>
+<p align=justify> 
+HOG stands for Histogram of Oriented Gradients. HOG features for an image are calculated by first dividing the image into a grid of uniformly spaced cells, then -- for each cell -- calculating a histogram of gradient orientations for pixels within that cell. The descriptor is then the combination of those histograms. HOG descriptors were originally used for the detection of humans in photographs [3], and have since been successfully used for the detection people, vehicles, animals, and additional objects in images [4]. In recent years HOG descriptors were also successfully used for recognition of characters extracted from images or graphics [2] -- a task similar to our goal in this project. 
+
+<figure align="middle">
+  <img src="images/hog.jpg" style="width: 250px; margin: 10px;" alt="HOG features">
+  <figcaption>Fig7. - A graphical representation of HOG features for an image. Each block contains a histogram of gradient edges, represented here as edges of varying brightness. The brightness of each orientation signifies its prevalence within that block.</figcaption>
+</figure>
+
+
+</p>
+
+<h3> 3. Results </h3>
+<p align=justify>
+We have tested our application on several photos of bookshelves taken in the same bookstore. Because performance of Matlab's OCR functionality is very poor, we do not have a measure the actual text recognition success. We will describe instead the performance of our application in the various processing stages, while listing causes of failure.
+</p>
+
+<p align=justify>
+While the application succeeds in many cases, no step in the processing chain seems to work perfectly. As all processing steps are dependent upon earlier steps, even minor error in early stages can greatly effect the success of later stages. Following is a description of results for each processing stage.
+</p>
+
+<h4> 3.1. Spine Separation </h4>
+<p align=justify>
+Under our problem domain assumptions, spine separation is the least problematic stage of all. Out of 78 books appearing in 4 bookshelf photographs, our application has successfully separated 75 of the books, which amounts to a success ratio of 96%. The main causes of failure seem either misleading book design (i.e. - a straight vertical line along the entire spine), or adjacent books of similar colors. 
+</p>
+
+<h4> 3.2. Text Segmentation </h4>
+<p align=justify>
+Nearly all book spines have a certain amount of non-text blobs left after segmentation and noise removal. This isn't especially troubling for OCR, since most of those can be ignored based on low confidence levels of recognition. However it can negatively affect the layout analysis stage by joining characters to non-character blobs, therefore wrongly skewing the angle and distance statistics for each word candidate. A more serious problem is treating valid text as background. Out of 36 spines in two bookshelf images, around 8 suffer from missing text, with 5 spines showing partial failures, and 3 with almost no text visible at all. This gives a success rate of 77% over a limited sample. This is mostly due to the inherent limitations of our segmentation method: inability to handle background which is non-uniform within small windows along the spine, or text values which are too close to the background values. For books displaying mostly uniform backgrounds, the success rates are significantly higher.
+</p>
+
+<p align=justify>
+Another problem present is over-segmented or under-segmented characters. Due to the low resolution of the images and small text sizes in some spines, the segmentation stage occasionally results in valid characters being split into two or more non-characters, due to a few (or a single) missing pixels. Similarly, the segmentation stage sometimes results in separate characters being fused together to form a non-existing character. The smaller the text - the higher the probability of this happening. 
+</p>
+
+
+<h4> 3.3. Layout Analysis </h4>
+<p align=justify>
+We measure the success of layout analysis by considering the ratio of the number of words correctly identified, to the total number of words. In an image consisted of 16 well-segmented books spines, with a total of 71 words, our algorithm has successfully identified 53 words, or 74% of all words. Most identification mistakes result in the grouping several distinct words together. This is often better than mistakes caused by splitting a word into several non-words, as the former is often easier to interpret correctly with the help of a search engine. 
+</p>
+
+<p align=justify>
+Failures are also sometimes caused by word positions and text design which our current system is unable to handle, such as adjacent lines being closer together than adjacent characters in each word.
+</p>
+
+<h3> 4. Conclusions, Limitations, and Future Work. </h3>
+<p align=justify>
+In this project we have developed a system for recognizing book titles from photos of bookshelves. Our system consists of 4 processing stages: Locating and separating the individual spines, segmenting the text from the background, grouping individual characters into words, and finally recognizing the words. Unfortunately we were unable to test the last stage due to technical difficulties with the training of classifiers, but we provide a working implementation for training and applying the classifiers, with instructions provided at the end of this report. The other components of the system are fully implemented and tested in Matlab.
+</p>
+
+<p align=justify>
+For the segmentation stage we have proposed and implemented a simple method suitable for most book spines, which exploits the uniformity of background along horizontal lines in the spines, and succeeds in correctly segmenting the text in around 77% of the spines, although usually with a certain amounts noise. For the grouping of characters into words, we have developed an algorithm that relies on relationships between each characters and its neighbors, capable of dealing with multiple text orientations, as well as varying sizes, typefaces and spacing, with success rates of over 70%.
+</p>
+
+<p align=justify>
+Our current system has several limitations, each presents opportunities for future work. Those limitations, possible solutions, and additional improvements, are discussed below.
+
+<ul>
+<li> <b>Inability to deal with complicated spine backgrounds.</b> As mentioned above - our segmentation method relies on book spines having a uniform background along horizontal lines, or within sufficiently small windows. When this isn't the case - our system will usually fail. Dealing with those cases would likely require a different approach to segmentation. </li>
+
+<li> <b> Spine angles. </b> Our system deals only with horizontally oriented spines, and this was an explicit part of our problem domain assumptions. However in practice, books on store bookshelf can appear in almost any orientation, though the horizontal one is the most common. Dealing with this wider array of orientations would require lifting any restrictions on line angles extracted from the Hough transform, and developing a method for correctly extracting book borders from potentially many intersecting lines.</li>
+
+<li> <b> Noise removal / filtering of non-text graphics. </b> Our segmentation stage almost always ends with certain amounts of noise present. As mention earlier - this negatively effects the layout analysis stage. A possible solution would be to apply OCR as part of the filtering process, deleting blobs below a certain recognition confidence level. Additionally, more geometric constrains can be added to our already existing set of constrains. However, we find that discerning the optimal set of such constrains is a very hard task to complete manually, but perhaps this can be done computationally. As mentioned earlier, we have also tried to use stroke-width information [2] for further filtering [8], with poor results, however this might be due to faulty implementation. </li>
+
+<li> <b> Oversegmented/undersegmented characters. </b> This problem can be inherently ambiguous (in the case of conjoined characters we can't say whether a character is an “m” or two “n”s just by looking at the character). An obvious solution would be to use higher resolution images. However this isn't always possible, and some oversegmented/undersegmetned characters can also be the result of the typeface. One possible approach is to to consider all possible interpretations for each word, and check each option against a dictionary of legal words. </li>
+
+<li> <b> Improved word detection. </b> Our current layout analysis algorithm sometimes results in words spanning several lines. This happens when the distance between two lines of text is smaller than the distance between adjacent characters within the same line. At least a certain portion of those cases can be fixed by allowing the splitting of words before or after the merging stage, based on a histogram of angles within a given word candidate. </li>
+
+<li> <b> Line detection. </b> Our current system groups individual characters into words, but does not group individual words into lines or blocks of text. Doing so would aid in the correct recognition of book titles. </li>
+
+<li> <b> Training a classifier for character recognition. </b> This would require either a stronger computer, more training time, using a classifier not trained in Matlab, or some combination of the above. </li>
+</ul>
+
+</p>
+
+<h3> Appendix A - Application User Guide </h3>
+
+
+<p align=justify>
+	The application allows users to see in action the various parts of our system. It allows to open any bookshelf image, separate the spines, then select a spine for further processing: Text segmentation, word detection, and character recognition using Matlab's built-in OCR functionality. Moreover, the user can choose whether to segment the text with or without noise removal, and also whether to detect words with or without the merging step of our layout analysis algorithm, thus allowing to inspect the precise effects of each step. Following is a brief description of how to use the application.
+</p>
+
+<p align=justify>
+First, open the app either by running the app.m file from within Matlab, or by running the standalone application (Book_Identifier_icbv151.exe). 
+</p>
+
+<p align=justify>
+	When opening the application, the only available option is to open a new image. Clicking it will open a load dialogue box allowing to select any bookshelf image from the filesystem.
+</p>
+
+<figure align="middle">
+  <img src="images/app1.jpg" style="width: 450px; margin: 10px;" alt="App stratup screen">
+  <figcaption>The application screen immediately after opening the app.</figcaption>
+</figure>
+
+<p align=justify>
+	The selected image will then be visible on the application screen, along with the option to detect the spines on the image. 
+</p>
+
+<figure align="middle">
+  <img src="images/app2.jpg" style="width: 450px; margin: 10px;" alt="App 2">
+  <figcaption>The image is displayed, and the “Locate Book Spines” button is now available.</figcaption>
+</figure>
+
+<p align=justify>
+	Clicking the “Locate Book Spines” button will run the spine separation procedure, and display the detected spines, along with a number for each spine. Each spine can be then chose by clicking the corresponding number in the “Choose Spine” listbox, and clicking on “Show Spine”.
+</p>
+
+<figure align="middle">
+  <img src="images/app3.jpg" style="width: 450px; margin: 10px;" alt="App 3">
+  <figcaption>The detected spines.</figcaption>
+</figure>
+
+<p align=justify>
+	Upon clicking on “Show Spine”, the main image will be replaced by a horizontal image of the chosen spine. You can next choose to segment the spine, either with or without noise removal. 
+</p>
+
+<figure align="middle">
+  <img src="images/app4.jpg" style="width: 450px; margin: 10px;" alt="App 4">
+  <figcaption>The selected spine.</figcaption>
+</figure>
+
+<p align=justify>
+	After segmentation, the segmented spine will be displayed, and the option to detect the words will become available. You can choose to apply the word detection either with or without the merging step of the layout analysis algorithm.
+</p>
+
+<figure align="middle">
+  <img src="images/app5.jpg" style="width: 450px; margin: 10px;" alt="App 4">
+  <figcaption>The spine following segmentation.</figcaption>
+</figure>
+
+<p align=justify>
+	The detected words will then be displayed, with each word given a different color. You can then choose to attempt and recognize the text using Matlab's OCR functionality. If you choose to do so, each visible word will be cropped and the resulting image will be passed to Matlab's OCR function (this is transparent to the user). Note that the Matlab's OCR performance is very poor and most of the time you will get inaccurate results. 
+</p>
+
+<figure align="middle">
+  <img src="images/app6.jpg" style="width: 450px; margin: 10px;" alt="App 4">
+  <figcaption>The detected words.</figcaption>
+</figure>
+
+<p align=justify>
+	Note that at any step you can choose to go back or reapply any of the previous processing stages, including opening a different image.
+</p>
+
+<h3> Appendix A - How to Train your Classifier </h3>
+
+<p align=justify>
+The code for training the classifiers is based on [7], with minor fixes. To train the character recognition classifier, follow the following steps:
+
+<ol>
+<li> Download and extract the EnglishFnt.tgz file from <a href="http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/">http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/</a>. 
+Open Matlab and add the extracted folder to your Matlab Path.</li>
+<li> Add the classifier folder (provided with this project) to your Matlab path. </li>
+<li> In Matlab, run <code> list_English_Fnt; </code> </li>
+<li> Run <code> fontChars = genFontChars(list); </code></li>
+<li> After completion, you can choose to train an SVM by running <code> svmRecognizer = genSVMRecognizer(fontChars, list.ALLlabels);</code>, or a k-Nearest Neighbors classifier by running <code> knnRecognizer = genKnnRecognizer(fontChars, list.ALLlabels); </code> </li>
+<li> Cross your fingers and wait for a very long time. We never got past this point.</li>
+<li> To classify a word, create a cell array chars of the word characters (each character - a binary image), then run <code> recSvmCaptcha(chars, svmRecognizer) </code> for the SVM classifier, or <code> recKnnCaptcha(chars, knnRecognizer) </code> for the KNN classifier. </li>
+</ol>
+
+Consult [7] for further information and instructions.
+</p>
+
+
+<h3> References </h3>
+<ol>
+<li>  John Canny. A computational approach to edge detection. Pattern
+Analysis and Machine Intelligence, IEEE Transactions on, (6):679–698,
+1986.  </li>
+<li> Huizhong Chen, Sam S Tsai, Georg Schroth, David M Chen, Radek
+Grzeszczuk, and Bernd Girod. Robust text detection in natural images
+with edge-enhanced maximally stable extremal regions. In Image
+Processing (ICIP), 2011 18th IEEE International Conference on, pages
+2609–2612. IEEE, 2011.</li>
+<li>  Navneet Dalal and Bill Triggs. Histograms of oriented gradients for
+human detection. In Computer Vision and Pattern Recognition, 2005.
+CVPR 2005. IEEE Computer Society Conference on, volume 1, pages
+886–893. IEEE, 2005. </li>
+<li> Navteen Dalal and Bill Triggs. Object detection using histograms
+of oriented gradients. In European Conference on Computer Vision,
+Workshop on Pascal VOC 06, 2006. </li>
+<li> Teo de Campos, Bodla Rakesh Babu, and Manik Varma. Character
+recognition in natural images. 2009. </li>
+<li> Microsoft Research India. The chars74k dataset. http://
+www.ee.surrey.ac.uk/CVSSP/demos/chars74k/. </li>
+<li> Kenneth Lim. Decaptcha - a captcha breaker using k-nearest neigh-
+bor classifiers, support vector machines, and neural networks. https:
+//github.com/kenlimmj/decaptcha. </li>
+<li>  MathWorks. Automatically detect and recognize text in natural im-
+ages. http://www.mathworks.com/help/vision/examples/automatically-
+detect-and-recognize-text-in-natural-images.html.</li>
+<li>  Lawrence O’Gorman. The document spectrum for page layout analysis.
+Pattern Analysis and Machine Intelligence, IEEE Transactions on,
+15(11):1162–1173, 1993. </li>
+<li>  Nobuyuki Otsu. A threshold selection method from gray-level his-
+tograms. Automatica, 11(285-296):23–27, 1975. </li>
+<li>  ?ivind Due Trier, Anil K Jain, and Torfinn Taxt. Feature extraction meth-
+ods for character recognition-a survey. Pattern recognition, 29(4):641–
+662, 1996. </li>
+<li> Ben Shahar, Ohad, Lecture notes from Introduction to Computational and Biological Vision course, 2015. </li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
